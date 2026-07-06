@@ -5,19 +5,19 @@ on:
     branches: [ main ]
 jobs:
   dump-enum-values:
-    runs-on: macos-15
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Android Emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 30
-          arch: arm64-v8a
+          arch: x86_64
           target: google_apis
-          ram-size: 2048M
+          ram-size: 4096M
           heap-size: 512M
-          disk-size: 4G
-          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -no-metrics
+          disk-size: 8G
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics -gpu swiftshader_indirect
           disable-animations: true
           emulator-boot-timeout: 600
           cores: 2
@@ -27,20 +27,47 @@ jobs:
             adb shell settings put global window_animation_scale 0.0
             adb shell settings put global transition_animation_scale 0.0
             adb shell settings put global animator_duration_scale 0.0
-            wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || curl -sL --connect-timeout 10 "https://api.apkcombo.com/download/com.gotokeep.keep" -o /tmp/keep.apk
-            wget -q --timeout=60 "https://github.com/frida/frida/releases/download/17.9.11/frida-server-17.9.11-android-arm64.xz" -O /tmp/frida-server.xz
+            # Download Keep APK
+            wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
+            curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
+            wget -q --timeout=60 -O /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || true
+            if [ ! -f /tmp/keep.apk ] || [ ! -s /tmp/keep.apk ]; then
+              echo "Downloading from app.mi.com (Xiaomi App Store)..."
+              wget -q --timeout=60 -O /tmp/keep.apk "https://app.mi.com/download/32596" || true
+            fi
+            ls -la /tmp/keep.apk || echo "APK download failed"
+            # Download Frida server (x86_64 for this emulator)
+            FRIDA_VER="17.9.11"
+            wget -q --timeout=60 "https://github.com/frida/frida/releases/download/${FRIDA_VER}/frida-server-${FRIDA_VER}-android-x86_64.xz" -O /tmp/frida-server.xz
             xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
-            adb install /tmp/keep.apk
+            ls -la /tmp/frida-server
+            # Install APK and Frida
+            adb install -r /tmp/keep.apk 2>&1 || {
+              echo "adb install failed, trying with -d flag..."
+              adb install -r -d /tmp/keep.apk 2>&1
+            }
             adb push /tmp/frida-server /data/local/tmp/
             adb shell chmod 755 /data/local/tmp/frida-server
+            # Start Frida server
             adb shell /data/local/tmp/frida-server -D &
-            sleep 3 && adb forward tcp:27042 tcp:27042
-            adb shell am start -n com.gotokeep.keep/.MainActivity && sleep 8
-            adb shell am start -d "keep://open/login" && sleep 3
-            timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output.txt 2>&1 || true
-            cat /tmp/frida_output.txt
-            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output2.txt 2>&1 || true
-            cat /tmp/frida_output2.txt
+            sleep 3
+            adb forward tcp:27042 tcp:27042
+            # Launch the app
+            adb shell am start -n com.gotokeep.keep/.MainActivity
+            sleep 10
+            adb shell am start -d "keep://open/login"
+            sleep 5
+            # Run Frida - try multiple approaches
+            echo "=== Method 1: Attach to running process ==="
+            timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_attach.txt 2>&1 || echo "Method 1 done"
+            echo "=== Method 2: Spawn fresh ==="
+            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_spawn.txt 2>&1 || echo "Method 2 done"
+            # Also try without deep link navigation
+            echo "=== Method 3: Just resume after spawn ==="
+            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause --runtime=v8 -o /tmp/frida_output_v8.txt 2>&1 || echo "Method 3 done"
+            # Collect results
+            echo "=== RESULTS ==="
+            cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
       - name: Upload Results
         if: always()
         uses: actions/upload-artifact@v4
