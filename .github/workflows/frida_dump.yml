@@ -5,7 +5,7 @@ on:
     branches: [ main ]
 jobs:
   dump-enum-values:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Setup Android Emulator
@@ -17,9 +17,10 @@ jobs:
           ram-size: 2048M
           heap-size: 512M
           disk-size: 4G
-          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect -no-metrics
           disable-animations: true
           emulator-boot-timeout: 600
+          cores: 2
           script: |
             set -x
             adb wait-for-device
@@ -31,7 +32,8 @@ jobs:
             xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
             adb install /tmp/keep.apk
             adb push /tmp/frida-server /data/local/tmp/
-            adb shell chmod 755 /data/local/tmp/frida-server && adb shell /data/local/tmp/frida-server -D &
+            adb shell chmod 755 /data/local/tmp/frida-server
+            adb shell /data/local/tmp/frida-server -D &
             sleep 3 && adb forward tcp:27042 tcp:27042
             adb shell am start -n com.gotokeep.keep/.MainActivity && sleep 8
             adb shell am start -d "keep://open/login" && sleep 3
