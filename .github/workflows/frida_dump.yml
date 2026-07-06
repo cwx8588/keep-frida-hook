@@ -1,0 +1,47 @@
+name: Keep Frida Hook - Dump VerificationCodeType Values
+on:
+  workflow_dispatch:
+  push: { branches: [ main ] }
+jobs:
+  dump-enum-values:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Android Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 4G
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim
+          disable-animations: true
+          script: |
+            set -x
+            adb wait-for-device
+            adb shell settings put global window_animation_scale 0.0
+            adb shell settings put global transition_animation_scale 0.0
+            adb shell settings put global animator_duration_scale 0.0
+            wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
+            curl -sL --connect-timeout 10 "https://api.apkcombo.com/download/com.gotokeep.keep" -o /tmp/keep.apk
+            wget -q --timeout=60 "https://github.com/frida/frida/releases/download/17.9.11/frida-server-17.9.11-android-x86_64.xz" -O /tmp/frida-server.xz
+            xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
+            adb install /tmp/keep.apk
+            adb push /tmp/frida-server /data/local/tmp/
+            adb shell chmod 755 /data/local/tmp/frida-server && adb shell /data/local/tmp/frida-server -D &
+            sleep 3 && adb forward tcp:27042 tcp:27042
+            adb shell am start -n com.gotokeep.keep/.MainActivity && sleep 8
+            adb shell am start -d "keep://open/login" && sleep 3
+            timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output.txt 2>&1 || true
+            cat /tmp/frida_output.txt
+            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output2.txt 2>&1 || true
+            cat /tmp/frida_output2.txt
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-results
+          path: /tmp/frida_output*.txt
+          retention-days: 90
