@@ -17,16 +17,20 @@ jobs:
           ram-size: 4096M
           heap-size: 512M
           disk-size: 8G
-          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics -gpu swiftshader_indirect
-          disable-animations: true
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics
+          disable-animations: false
           emulator-boot-timeout: 600
           cores: 2
           script: |
             set -x
+            echo "=== Waiting for emulator to fully boot... ==="
             adb wait-for-device
-            adb shell settings put global window_animation_scale 0.0
-            adb shell settings put global transition_animation_scale 0.0
-            adb shell settings put global animator_duration_scale 0.0
+            sleep 15
+            echo "=== Disabling animations... ==="
+            adb shell settings put global window_animation_scale 0.0 || true
+            adb shell settings put global transition_animation_scale 0.0 || true
+            adb shell settings put global animator_duration_scale 0.0 || true
+            echo "=== Downloading Keep APK... ==="
             # Download Keep APK
             wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
             curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
