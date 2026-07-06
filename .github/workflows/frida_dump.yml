@@ -1,0 +1,93 @@
+name: Keep Frida Hook - Dump VerificationCodeType Values
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  dump-enum-values:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Android SDK with Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 4G
+          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim
+          disable-animations: true
+          script: |
+            set -x
+            adb wait-for-device
+            adb shell settings put global window_animation_scale 0.0
+            adb shell settings put global transition_animation_scale 0.0
+            adb shell settings put global animator_duration_scale 0.0
+
+            # --- Download Keep APK ---
+            echo "=== Downloading Keep APK ==="
+            wget -q --timeout=30 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
+            wget -q --timeout=30 "https://apkpure.com/api/v2/apk/com.gotokeep.keep/download" -O /tmp/keep.apk || \
+            curl -sL --connect-timeout 10 "https://api.apkcombo.com/download/com.gotokeep.keep" -o /tmp/keep.apk
+            
+            if [ ! -s /tmp/keep.apk ]; then
+              echo "✗ Failed to download APK - trying GitHub release artifacts"
+              # The workflow has the APK uploaded as artifact or we need to find it
+              exit 1
+            fi
+            echo "✓ APK size: $(stat -c%s /tmp/keep.apk) bytes"
+
+            # --- Download & setup frida-server ---
+            echo "=== Setting up Frida ==="
+            wget -q --timeout=30 "https://github.com/frida/frida/releases/download/17.9.11/frida-server-17.9.11-android-x86_64.xz" -O /tmp/frida-server.xz
+            xz -d /tmp/frida-server.xz -c > /tmp/frida-server
+            chmod +x /tmp/frida-server
+            adb push /tmp/frida-server /data/local/tmp/
+            adb shell chmod 755 /data/local/tmp/frida-server
+            adb shell /data/local/tmp/frida-server -D &
+            sleep 3
+            adb forward tcp:27042 tcp:27042
+
+            # --- Install APK ---
+            echo "=== Installing APK ==="
+            adb install /tmp/keep.apk || adb install -r /tmp/keep.apk
+            echo "✓ APK installed"
+
+            # --- Push Frida script ---
+            adb push /github/workspace/frida_hook.js /data/local/tmp/
+
+            # --- Start Keep app ---
+            echo "=== Starting Keep app ==="
+            adb shell am start -n com.gotokeep.keep/.MainActivity
+            sleep 8
+            # Try navigating to login page
+            adb shell am start -d "keep://open/login"
+            sleep 3
+
+            # --- Run Frida Hook ---
+            echo "=== Running Frida Hook (attach mode) ==="
+            timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output.txt 2>&1 || true
+            
+            echo "=== Frida Output ==="
+            cat /tmp/frida_output.txt
+
+            # --- Second attempt: spawn mode ---
+            echo "=== Running Frida Hook (spawn mode) ==="
+            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output2.txt 2>&1 || true
+            echo "=== Frida Output 2 ==="
+            cat /tmp/frida_output2.txt
+
+      - name: Upload Frida Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frida-results
+          path: |
+            /tmp/frida_output*.txt
+          retention-days: 90

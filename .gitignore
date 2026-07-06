@@ -1,0 +1,6 @@
+*.log
+/tmp/
+keep.apk
+frida-server*
+push_to_github.sh
+setup.sh
