@@ -5,73 +5,121 @@ on:
     branches: [ main ]
 jobs:
   dump-enum-values:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        api-level: [30]
+        target: [google_apis]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Android Emulator
-        uses: reactivecircus/android-emulator-runner@v2
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          api-level: 30
-          arch: x86_64
-          target: google_apis
-          ram-size: 4096M
-          heap-size: 512M
-          disk-size: 8G
-          emulator-options: -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics
-          disable-animations: false
-          emulator-boot-timeout: 600
-          cores: 2
-          script: |
-            set -x
-            echo "=== Waiting for emulator to fully boot... ==="
-            adb wait-for-device
-            sleep 15
-            echo "=== Disabling animations... ==="
-            adb shell settings put global window_animation_scale 0.0 || true
-            adb shell settings put global transition_animation_scale 0.0 || true
-            adb shell settings put global animator_duration_scale 0.0 || true
-            echo "=== Downloading Keep APK... ==="
-            # Download Keep APK
-            wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
-            curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
-            wget -q --timeout=60 -O /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || true
-            if [ ! -f /tmp/keep.apk ] || [ ! -s /tmp/keep.apk ]; then
-              echo "Downloading from app.mi.com (Xiaomi App Store)..."
-              wget -q --timeout=60 -O /tmp/keep.apk "https://app.mi.com/download/32596" || true
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Android SDK + system image
+        uses: android-actions/setup-android@v3
+
+      - name: Download system image and create AVD
+        run: |
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64" --sdk_root=$ANDROID_HOME 2>&1
+          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
+            -n testAVD \
+            -k "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64" \
+            -d pixel_6 \
+            --force 2>&1
+
+      - name: Boot emulator
+        run: |
+          $ANDROID_HOME/emulator/emulator -avd testAVD \
+            -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics \
+            -gpu swiftshader_indirect -read-only \
+            -memory 2048 -cores 2 &
+          echo "Waiting for emulator to boot..."
+          $ANDROID_HOME/platform-tools/adb wait-for-device
+          # Wait for boot to complete (up to 10 minutes)
+          BOOT_TIMEOUT=600
+          BOOT_START=$(date +%s)
+          while true; do
+            BOOT_COMPLETE=$($ANDROID_HOME/platform-tools/adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r\n')
+            if [ "$BOOT_COMPLETE" = "1" ]; then
+              echo "Emulator boot completed!"
+              break
             fi
-            ls -la /tmp/keep.apk || echo "APK download failed"
-            # Download Frida server (x86_64 for this emulator)
-            FRIDA_VER="17.9.11"
-            wget -q --timeout=60 "https://github.com/frida/frida/releases/download/${FRIDA_VER}/frida-server-${FRIDA_VER}-android-x86_64.xz" -O /tmp/frida-server.xz
-            xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
-            ls -la /tmp/frida-server
-            # Install APK and Frida
-            adb install -r /tmp/keep.apk 2>&1 || {
-              echo "adb install failed, trying with -d flag..."
-              adb install -r -d /tmp/keep.apk 2>&1
-            }
-            adb push /tmp/frida-server /data/local/tmp/
-            adb shell chmod 755 /data/local/tmp/frida-server
-            # Start Frida server
-            adb shell /data/local/tmp/frida-server -D &
-            sleep 3
-            adb forward tcp:27042 tcp:27042
-            # Launch the app
-            adb shell am start -n com.gotokeep.keep/.MainActivity
+            ELAPSED=$(($(date +%s) - BOOT_START))
+            if [ $ELAPSED -gt $BOOT_TIMEOUT ]; then
+              echo "ERROR: Emulator boot timeout after ${BOOT_TIMEOUT}s"
+              exit 1
+            fi
+            echo "Waiting... (${ELAPSED}s)"
             sleep 10
-            adb shell am start -d "keep://open/login"
-            sleep 5
-            # Run Frida - try multiple approaches
-            echo "=== Method 1: Attach to running process ==="
-            timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_attach.txt 2>&1 || echo "Method 1 done"
-            echo "=== Method 2: Spawn fresh ==="
-            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_spawn.txt 2>&1 || echo "Method 2 done"
-            # Also try without deep link navigation
-            echo "=== Method 3: Just resume after spawn ==="
-            timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause --runtime=v8 -o /tmp/frida_output_v8.txt 2>&1 || echo "Method 3 done"
-            # Collect results
-            echo "=== RESULTS ==="
-            cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
+          done
+          echo "=== Emulator ready ==="
+          $ANDROID_HOME/platform-tools/adb shell settings put global window_animation_scale 0.0 || true
+          $ANDROID_HOME/platform-tools/adb shell settings put global transition_animation_scale 0.0 || true
+          $ANDROID_HOME/platform-tools/adb shell settings put global animator_duration_scale 0.0 || true
+
+      - name: Install Keep APK + Frida
+        run: |
+          # Download Keep APK
+          wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
+          curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
+          wget -q --timeout=60 -O /tmp/keep.apk "https://app.mi.com/download/32596" || true
+          ls -la /tmp/keep.apk
+          # Download Frida server x86_64
+          FRIDA_VER="17.9.11"
+          wget -q --timeout=60 "https://github.com/frida/frida/releases/download/${FRIDA_VER}/frida-server-${FRIDA_VER}-android-x86_64.xz" -O /tmp/frida-server.xz
+          xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
+          ls -la /tmp/frida-server
+          # Install APK
+          $ANDROID_HOME/platform-tools/adb install -r -d /tmp/keep.apk 2>&1 || \
+          $ANDROID_HOME/platform-tools/adb install -r /tmp/keep.apk 2>&1 || \
+          echo "adb install failed"
+          # Push Frida server
+          $ANDROID_HOME/platform-tools/adb push /tmp/frida-server /data/local/tmp/
+          $ANDROID_HOME/platform-tools/adb shell chmod 755 /data/local/tmp/frida-server
+
+      - name: Run Frida Hook
+        run: |
+          # Start frida-server
+          $ANDROID_HOME/platform-tools/adb shell /data/local/tmp/frida-server -D &
+          sleep 3
+          $ANDROID_HOME/platform-tools/adb forward tcp:27042 tcp:27042
+          # Launch app
+          $ANDROID_HOME/platform-tools/adb shell am start -n com.gotokeep.keep/.MainActivity
+          sleep 10
+          $ANDROID_HOME/platform-tools/adb shell am start -d "keep://open/login"
+          sleep 5
+          # Run Frida hooks
+          echo "=== Method 1: Attach ==="
+          timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_attach.txt 2>&1 || true
+          echo "=== Method 2: Spawn ==="
+          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_spawn.txt 2>&1 || true
+          echo "=== Method 3: Spawn V8 ==="
+          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause --runtime=v8 -o /tmp/frida_output_v8.txt 2>&1 || true
+          # Collect results
+          echo "=== RESULTS ==="
+          cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
+
+      - name: Debug - dump extra info
+        if: always()
+        run: |
+          echo "=== Installed packages ==="
+          $ANDROID_HOME/platform-tools/adb shell pm list packages | grep keep || echo "Keep not installed"
+          echo "=== Running processes ==="
+          $ANDROID_HOME/platform-tools/adb shell ps | grep -i keep || echo "Keep not running"
+          echo "=== Logcat ==="
+          $ANDROID_HOME/platform-tools/adb logcat -d -t 50 | grep -i "keep\|frida" || true
+
       - name: Upload Results
         if: always()
         uses: actions/upload-artifact@v4
