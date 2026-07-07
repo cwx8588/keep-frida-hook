@@ -30,19 +30,12 @@ jobs:
 
       - name: Download system image and create AVD
         run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64" --sdk_root=$ANDROID_HOME 2>&1
-          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd \
-            -n testAVD \
-            -k "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64" \
-            -d pixel_6 \
-            --force 2>&1
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64"
+          echo "no" | $ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd -n testAVD -k "system-images;android-${{ matrix.api-level }};${{ matrix.target }};x86_64" -d pixel_6 --force
 
       - name: Boot emulator
         run: |
-          $ANDROID_HOME/emulator/emulator -avd testAVD \
-            -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics \
-            -gpu swiftshader_indirect -read-only \
-            -memory 2048 -cores 2 &
+          $ANDROID_HOME/emulator/emulator -avd testAVD -no-window -no-snapshot -no-audio -no-boot-anim -no-metrics -gpu swiftshader_indirect -read-only -memory 2048 -cores 2 &
           echo "Waiting for emulator to boot..."
           $ANDROID_HOME/platform-tools/adb wait-for-device
           BOOT_TIMEOUT=600
@@ -62,93 +55,57 @@ jobs:
             sleep 10
           done
           echo "=== Emulator ready ==="
-          $ANDROID_HOME/platform-tools/adb shell settings put global window_animation_scale 0.0 || true
-          $ANDROID_HOME/platform-tools/adb shell settings put global transition_animation_scale 0.0 || true
-          $ANDROID_HOME/platform-tools/adb shell settings put global animator_duration_scale 0.0 || true
 
-      - name: Install Keep APK + Frida
+      - name: Install APK and Frida server
         run: |
           ANDROID_HOME=/usr/local/lib/android/sdk
           # Download Keep APK from GitHub Release
-          echo "=== Downloading Keep APK from GitHub Release ==="
-          wget -q --timeout=120 "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" -O /tmp/keep.apk || \
-          curl -sL --connect-timeout 60 -o /tmp/keep.apk "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" || \
-          echo "GitHub Release download failed"
+          wget -q --timeout=120 "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" -O /tmp/keep.apk
           ls -la /tmp/keep.apk
-          # Download Frida server x86_64
-          FRIDA_VER="17.15.3"
-          wget -q --timeout=60 "https://github.com/frida/frida/releases/download/${FRIDA_VER}/frida-server-${FRIDA_VER}-android-x86_64.xz" -O /tmp/frida-server.xz
+          # Download Frida server x86_64 (matching pip frida-tools version)
+          wget -q --timeout=60 "https://github.com/frida/frida/releases/download/17.15.3/frida-server-17.15.3-android-x86_64.xz" -O /tmp/frida-server.xz
           xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
           ls -la /tmp/frida-server
-          # Install APK
-          $ANDROID_HOME/platform-tools/adb install -r -d /tmp/keep.apk 2>&1 ||           $ANDROID_HOME/platform-tools/adb install -r /tmp/keep.apk 2>&1 ||           echo "adb install failed"
+          # Install APK with adb
+          $ANDROID_HOME/platform-tools/adb install -r -d /tmp/keep.apk
           # Push Frida server
           $ANDROID_HOME/platform-tools/adb push /tmp/frida-server /data/local/tmp/
           $ANDROID_HOME/platform-tools/adb shell chmod 755 /data/local/tmp/frida-server
 
-      - name: Find launchable activity
-        run: |
-          ANDROID_HOME=/usr/local/lib/android/sdk
-          echo "=== Finding launchable activity ==="
-          # Use aapt2 to dump APK manifest info
-          AAPT=$(ls /usr/local/lib/android/sdk/build-tools/*/aapt 2>/dev/null | head -1)
-          if [ -n "$AAPT" ] && [ -f /tmp/keep.apk ]; then
-            $AAPT dump badging /tmp/keep.apk 2>/dev/null | grep -E "package:|launchable-activity|application-label" || true
-          else
-            echo "aapt not found, trying pm command via adb..."
-            $ANDROID_HOME/platform-tools/adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null || \
-            $ANDROID_HOME/platform-tools/adb shell pm dump com.gotokeep.keep 2>/dev/null | grep -i "MainActivity\|Splash\|Launcher\|Login" | head -5 || true
-          fi
-
       - name: Install frida-tools
         run: |
-          pip install frida-tools 2>&1 | tail -5
+          pip install frida-tools
           frida --version
 
-      - name: Run Frida Hook
+      - name: Run Frida Hook (attach only)
         run: |
           ANDROID_HOME=/usr/local/lib/android/sdk
           # Start frida-server
           $ANDROID_HOME/platform-tools/adb shell /data/local/tmp/frida-server -D &
-          sleep 3
+          sleep 5
           $ANDROID_HOME/platform-tools/adb forward tcp:27042 tcp:27042
-          # Find correct activity and launch app
-          echo "=== Launching app ==="
+          # Launch Keep app via activity
           MAIN_ACTIVITY=$($ANDROID_HOME/platform-tools/adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1)
           echo "Main activity: [$MAIN_ACTIVITY]"
           $ANDROID_HOME/platform-tools/adb shell am start -n "$MAIN_ACTIVITY"
           sleep 15
-          # Kick with deep link to login
           $ANDROID_HOME/platform-tools/adb shell am start -d "keep://open/login"
           sleep 5
-          # Verify app is running
-          echo "=== Checking app process ==="
-          $ANDROID_HOME/platform-tools/adb shell pidof com.gotokeep.keep ||           $ANDROID_HOME/platform-tools/adb shell ps | grep -i keep ||           echo "WARNING: App process not found!"
-          # Run Frida hooks - ONLY attach to running process (no spawn - DexGuard blocks spawn)
-          echo "=== Method 1: Attach by PID ==="
-          KEEP_PID=$($ANDROID_HOME/platform-tools/adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '
-')
+          # Get running process PID
+          KEEP_PID=$($ANDROID_HOME/platform-tools/adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n')
+          echo "Keep PID: [$KEEP_PID]"
+          if [ -z "$KEEP_PID" ]; then
+            $ANDROID_HOME/platform-tools/adb shell ps | grep keep || echo "Keep not running"
+          fi
+          # Attach to process (DexGuard blocks spawn)
+          echo "=== Attaching ==="
           if [ -n "$KEEP_PID" ]; then
-            echo "Keep PID: $KEEP_PID"
-            timeout 120 frida -U --attach-pid "$KEEP_PID" -l frida_hook.js -o /tmp/frida_output_pid.txt 2>&1 || true
+            timeout 120 frida -U --attach-pid "$KEEP_PID" -l frida_hook.js -o /tmp/frida_output.txt 2>&1
           else
-            echo "PID not found, trying attach by name..."
-            timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_name.txt 2>&1 || true
+            timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output.txt 2>&1
           fi
           echo "=== RESULTS ==="
-          cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
-          ls -la /tmp/frida_output*.txt 2>/dev/null || true
-
-      - name: Debug - dump extra info
-        if: always()
-        run: |
-          ANDROID_HOME=/usr/local/lib/android/sdk
-          echo "=== Installed packages ==="
-          $ANDROID_HOME/platform-tools/adb shell pm list packages | grep keep || echo "Keep not installed"
-          echo "=== Running processes ==="
-          $ANDROID_HOME/platform-tools/adb shell ps | grep -i keep || echo "Keep not running"
-          echo "=== Logcat ==="
-          $ANDROID_HOME/platform-tools/adb logcat -d -t 50 | grep -i "keep\|frida" || true
+          cat /tmp/frida_output.txt 2>/dev/null || echo "No output"
 
       - name: Upload Results
         if: always()
