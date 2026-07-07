@@ -59,19 +59,19 @@ jobs:
             # Push Frida server
             adb push /tmp/frida-server /data/local/tmp/
             adb shell chmod 755 /data/local/tmp/frida-server
-            # Install APK (may fail if ABIs don't match)
-            adb install -r -d /tmp/keep.apk 2>&1 || {
-              echo "INSTALL_FAILED - trying with native libs stripped..."
-              cd /tmp && unzip -o keep.apk -d keep_extracted 2>/dev/null
-              rm -rf keep_extracted/lib/armeabi-v7a keep_extracted/lib/arm64-v8a 2>/dev/null
-              cd keep_extracted && zip -r /tmp/keep_nolibs.apk . 2>/dev/null
-              cd /tmp && java -jar /tmp/uber-apk-signer*.jar --apks keep_nolibs.apk --ks /tmp/debug.keystore --ksAlias androiddebugkey --ksPass android --ksKeyPass android 2>/dev/null || true
-              # Try install with stripped libs
-              adb install -r -d /tmp/keep_nolibs.apk 2>&1 || {
-                echo "Still fails. Falling through..."
-                adb install -r /tmp/keep.apk 2>&1 || true
-              }
-            }
+            # Install APK (google_apis_playstore has ARM translation)
+            INSTALL_RESULT=$(adb install -r -d /tmp/keep.apk 2>&1) || true
+            echo "Install result: $INSTALL_RESULT"
+            if echo "$INSTALL_RESULT" | grep -q "NO_MATCHING_ABIS"; then
+              echo "ABI mismatch! Trying with stripped native libs..."
+              mkdir -p /tmp/keep_stripped
+              cd /tmp/keep_stripped
+              unzip -o /tmp/keep.apk >/dev/null 2>&1
+              rm -rf lib/armeabi-v7a lib/arm64-v8a
+              rm -rf META-INF
+              zip -r /tmp/keep_stripped.apk . >/dev/null 2>&1
+              adb install -r -d /tmp/keep_stripped.apk 2>&1 || echo "Stripped install also failed"
+            fi
             # Start Frida server
             adb shell /data/local/tmp/frida-server -D &
             sleep 3
