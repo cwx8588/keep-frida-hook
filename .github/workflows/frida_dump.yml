@@ -38,9 +38,24 @@ jobs:
           mkdir -p /tmp/keep_stripped
           cd /tmp/keep_stripped
           unzip -o /tmp/keep.apk >/dev/null 2>&1
-          rm -rf lib/ lib/
+          rm -rf lib/
           rm -rf META-INF/
           zip -r /tmp/keep_stripped.apk . >/dev/null 2>&1
+          # Sign the stripped APK with debug key
+          BUILD_TOOLS=$(ls -d /usr/local/lib/android/sdk/build-tools/* 2>/dev/null | tail -1)
+          if [ -z "$BUILD_TOOLS" ]; then
+            echo "Installing build-tools..."
+            echo y | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "build-tools;34.0.0" >/dev/null 2>&1
+            BUILD_TOOLS="/usr/local/lib/android/sdk/build-tools/34.0.0"
+          fi
+          echo "Using build-tools: $BUILD_TOOLS"
+          # Generate debug keystore if needed
+          KEYSTORE=$HOME/.android/debug.keystore
+          if [ ! -f "$KEYSTORE" ]; then
+            mkdir -p $HOME/.android
+            keytool -genkey -v -keystore "$KEYSTORE" -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" 2>/dev/null
+          fi
+          $BUILD_TOOLS/apksigner sign --ks "$KEYSTORE" --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android /tmp/keep_stripped.apk 2>&1
           ls -la /tmp/keep.apk /tmp/keep_stripped.apk /tmp/frida-server
       - name: Run Emulator + Frida
         uses: reactivecircus/android-emulator-runner@v2
