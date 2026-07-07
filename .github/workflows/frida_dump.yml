@@ -72,8 +72,8 @@ jobs:
             adb install -r -d /tmp/keep_stripped.apk 2>&1; echo "INSTALL_RESULT=$?"
             adb shell /data/local/tmp/frida-server -D &
             sleep 5 && adb forward tcp:27042 tcp:27042
-            MAIN_ACTIVITY=$(adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1); echo "MAIN_ACTIVITY=[$MAIN_ACTIVITY]"
-            adb shell am start -n "$MAIN_ACTIVITY"; sleep 10
+            MAIN_ACTIVITY="com.gotokeep.keep/.splash.SplashActivity"; echo "MAIN_ACTIVITY=[$MAIN_ACTIVITY]"
+            adb shell am start -n "$MAIN_ACTIVITY"; sleep 15
             adb shell am start -d "keep://open/login"; sleep 5
             KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n'); echo "KEEP_PID=[$KEEP_PID]"
             if [ -z "$KEEP_PID" ]; then adb shell ps | grep keep || echo "App not running!"; exit 1; fi
