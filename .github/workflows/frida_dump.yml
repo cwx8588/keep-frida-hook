@@ -112,32 +112,29 @@ jobs:
           $ANDROID_HOME/platform-tools/adb shell /data/local/tmp/frida-server -D &
           sleep 3
           $ANDROID_HOME/platform-tools/adb forward tcp:27042 tcp:27042
-          # Find correct activity
-          echo "=== Finding correct activity name ==="
+          # Find correct activity and launch app
+          echo "=== Launching app ==="
           MAIN_ACTIVITY=$($ANDROID_HOME/platform-tools/adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1)
           echo "Main activity: [$MAIN_ACTIVITY]"
-          if [ -z "$MAIN_ACTIVITY" ] || [ "$MAIN_ACTIVITY" = "No activity found" ]; then
-            MAIN_ACTIVITY=$($ANDROID_HOME/platform-tools/adb shell pm dump com.gotokeep.keep 2>/dev/null | grep -oP 'com\.gotokeep\.keep\/[^ ]+' | head -1)
-            echo "Fallback activity: [$MAIN_ACTIVITY]"
-          fi
-          if [ -z "$MAIN_ACTIVITY" ]; then
-            MAIN_ACTIVITY="com.gotokeep.keep/.MainActivity"
-            echo "Using default: [$MAIN_ACTIVITY]"
-          fi
-          # Launch app
           $ANDROID_HOME/platform-tools/adb shell am start -n "$MAIN_ACTIVITY"
-          sleep 10
+          sleep 15
+          # Kick with deep link to login
           $ANDROID_HOME/platform-tools/adb shell am start -d "keep://open/login"
           sleep 5
-          # Run Frida hooks (fixed syntax for frida-tools >=16)
-          echo "=== Method 1: Spawn ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_spawn.txt 2>&1 || true
-          echo "=== Method 2: Attach by name ==="
-          timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_attach.txt 2>&1 || true
-          echo "=== Method 3: Spawn with attach ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_v8.txt 2>&1 || true
-          echo "=== Method 4: frida-trace ==="
-          timeout 120 frida-trace -U -f com.gotokeep.keep -j '*VerificationCodeType*!*' -o /tmp/frida_output_trace.txt 2>&1 || true
+          # Verify app is running
+          echo "=== Checking app process ==="
+          $ANDROID_HOME/platform-tools/adb shell pidof com.gotokeep.keep ||           $ANDROID_HOME/platform-tools/adb shell ps | grep -i keep ||           echo "WARNING: App process not found!"
+          # Run Frida hooks - ONLY attach to running process (no spawn - DexGuard blocks spawn)
+          echo "=== Method 1: Attach by PID ==="
+          KEEP_PID=$($ANDROID_HOME/platform-tools/adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '
+')
+          if [ -n "$KEEP_PID" ]; then
+            echo "Keep PID: $KEEP_PID"
+            timeout 120 frida -U --attach-pid "$KEEP_PID" -l frida_hook.js -o /tmp/frida_output_pid.txt 2>&1 || true
+          else
+            echo "PID not found, trying attach by name..."
+            timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_name.txt 2>&1 || true
+          fi
           echo "=== RESULTS ==="
           cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
           ls -la /tmp/frida_output*.txt 2>/dev/null || true
