@@ -1,39 +1,43 @@
 // Frida script to dump all VerificationCodeType enum values
 // Hook VerificationCodeType.h() method to capture return values
 
-Java.perform(function() {
+Java.performNow(function() {
+    // Method 1: Direct hook on VerificationCodeType class
     try {
-        // 方法1: Direct hook on VerificationCodeType class
+        console.log('[+] Trying Method 1: Direct hook...');
         var VerificationCodeType = Java.use('com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType');
         console.log('[+] Found VerificationCodeType class');
-        
+
         // Hook h() method - returns the type string value
         VerificationCodeType.h.implementation = function() {
             var result = this.h();
-            console.log('[+] VerificationCodeType.h() = ' + result);
-            console.log('[+] Enum name: ' + this.name());
+            console.log('[ENUM] h() = ' + result);
+            console.log('[ENUM] name = ' + this.name());
             return result;
         };
-        
+
         // Dump all enum values
         var values = VerificationCodeType.values();
         console.log('[+] Total enum constants: ' + values.length);
         values.forEach(function(v) {
-            console.log('[ENUM] name=' + v.name() + ' h()=' + v.h());
+            try {
+                console.log('[ENUM] name=' + v.name() + ' h()=' + v.h());
+            } catch(e2) {
+                console.log('[ENUM] name=' + v.name() + ' h()=ERROR:' + e2);
+            }
         });
-        
+
     } catch(e) {
         console.log('[!] Method 1 failed: ' + e);
+        console.log('[!] Stack: ' + e.stack);
     }
-    
-    // 方法2: Hook the SMS sender method instead
+
+    // Method 2: Hook the SMS sender method instead
     try {
         console.log('[+] Trying Method 2: Hook SMS sender...');
-        
-        // Hook ob0/f.b() - the method that builds SMS request
         var ob0_f = Java.use('ob0.f');
-        ob0_f.b.overload('com.gotokeep.keep.fd.business.account.login.view.PhoneNumberEntityWithCountry', 
-                          'com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType').implementation = 
+        ob0_f.b.overload('com.gotokeep.keep.fd.business.account.login.view.PhoneNumberEntityWithCountry',
+                          'com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType').implementation =
         function(phone, type) {
             console.log('[+] SMS send triggered!');
             console.log('[+] Phone: ' + phone.d());
@@ -46,13 +50,12 @@ Java.perform(function() {
     } catch(e) {
         console.log('[!] Method 2 failed: ' + e);
     }
-    
-    // 方法3: Hook all enum toString/valueOf
+
+    // Method 3: Hook toString
     try {
-        console.log('[+] Trying Method 3: Hook enum toString...');
-        var VerificationCodeType = Java.use('com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType');
-        
-        VerificationCodeType.toString.implementation = function() {
+        console.log('[+] Trying Method 3: Hook toString...');
+        var VerificationCodeType2 = Java.use('com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType');
+        VerificationCodeType2.toString.implementation = function() {
             var result = this.toString();
             console.log('[toString] ' + result);
             return result;
@@ -62,8 +65,7 @@ Java.perform(function() {
     }
 });
 
-// Auto-exit after 5 seconds to allow hooks to fire
+// Auto-exit after 30 seconds
 setTimeout(function() {
-    console.log("[+] Auto-exiting after 5 seconds");
-    Process.exit(0);
-}, 5000);
+    console.log('[+] Auto-exiting after 30 seconds');
+}, 30000);
