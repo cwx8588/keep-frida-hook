@@ -88,6 +88,11 @@ jobs:
           $ANDROID_HOME/platform-tools/adb push /tmp/frida-server /data/local/tmp/
           $ANDROID_HOME/platform-tools/adb shell chmod 755 /data/local/tmp/frida-server
 
+      - name: Install frida-tools
+        run: |
+          pip install frida-tools 2>&1 | tail -5
+          frida --version
+
       - name: Run Frida Hook
         run: |
           # Start frida-server
