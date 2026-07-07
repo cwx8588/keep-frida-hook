@@ -61,3 +61,9 @@ Java.perform(function() {
         console.log('[!] Method 3 failed: ' + e);
     }
 });
+
+// Auto-exit after 5 seconds to allow hooks to fire
+setTimeout(function() {
+    console.log("[+] Auto-exiting after 5 seconds");
+    Process.exit(0);
+}, 5000);
