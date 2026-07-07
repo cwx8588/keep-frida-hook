@@ -40,9 +40,8 @@ jobs:
           unzip -o /tmp/keep.apk >/dev/null 2>&1
           rm -rf lib/
           rm -rf META-INF/
-          # Re-zip with resources.aruc uncompressed for Android 12+ compatibility
-          zip -r -0 /tmp/keep_unsigned.apk . -i "resources.arsc" >/dev/null 2>&1
-          zip -r /tmp/keep_unsigned.apk . -x "resources.arsc" >/dev/null 2>&1
+          # Re-zip with all files stored uncompressed for Android 12+ compatibility
+          zip -r -0 /tmp/keep_unsigned.apk . >/dev/null 2>&1
           # Find build-tools for zipalign + apksigner
           BUILD_TOOLS=$(ls -d /usr/local/lib/android/sdk/build-tools/* 2>/dev/null | tail -1)
           if [ -z "$BUILD_TOOLS" ]; then
