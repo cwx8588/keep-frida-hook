@@ -69,10 +69,11 @@ jobs:
       - name: Install Keep APK + Frida
         run: |
           ANDROID_HOME=/usr/local/lib/android/sdk
-          # Download Keep APK
-          wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
-          curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
-          wget -q --timeout=60 -O /tmp/keep.apk "https://app.mi.com/download/32596" || true
+          # Download Keep APK from GitHub Release
+          echo "=== Downloading Keep APK from GitHub Release ==="
+          wget -q --timeout=120 "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" -O /tmp/keep.apk || \
+          curl -sL --connect-timeout 60 -o /tmp/keep.apk "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" || \
+          echo "GitHub Release download failed"
           ls -la /tmp/keep.apk
           # Download Frida server x86_64
           FRIDA_VER="17.9.11"
@@ -80,9 +81,7 @@ jobs:
           xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
           ls -la /tmp/frida-server
           # Install APK
-          $ANDROID_HOME/platform-tools/adb install -r -d /tmp/keep.apk 2>&1 || \
-          $ANDROID_HOME/platform-tools/adb install -r /tmp/keep.apk 2>&1 || \
-          echo "adb install failed"
+          $ANDROID_HOME/platform-tools/adb install -r -d /tmp/keep.apk 2>&1 ||           $ANDROID_HOME/platform-tools/adb install -r /tmp/keep.apk 2>&1 ||           echo "adb install failed"
           # Push Frida server
           $ANDROID_HOME/platform-tools/adb push /tmp/frida-server /data/local/tmp/
           $ANDROID_HOME/platform-tools/adb shell chmod 755 /data/local/tmp/frida-server
