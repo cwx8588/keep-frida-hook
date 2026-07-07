@@ -131,11 +131,11 @@ jobs:
           sleep 5
           # Run Frida hooks (fixed syntax for frida-tools >=16)
           echo "=== Method 1: Spawn ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_spawn.txt 2>&1 || true
+          timeout 120 frida -U -f com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_spawn.txt 2>&1 || true
           echo "=== Method 2: Attach by name ==="
-          timeout 120 frida -U -n com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_attach.txt 2>&1 || true
+          timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_attach.txt 2>&1 || true
           echo "=== Method 3: Spawn with attach ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_v8.txt 2>&1 || true
+          timeout 120 frida -U -f com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output_v8.txt 2>&1 || true
           echo "=== Method 4: frida-trace ==="
           timeout 120 frida-trace -U -f com.gotokeep.keep -j '*VerificationCodeType*!*' -o /tmp/frida_output_trace.txt 2>&1 || true
           echo "=== RESULTS ==="
