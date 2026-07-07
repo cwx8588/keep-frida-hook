@@ -80,6 +80,10 @@ jobs:
       - name: Run Frida Hook (attach only)
         run: |
           ANDROID_HOME=/usr/local/lib/android/sdk
+          # Disable SELinux and ptrace restrictions for Frida injection
+          $ANDROID_HOME/platform-tools/adb root
+          $ANDROID_HOME/platform-tools/adb shell setenforce 0 2>/dev/null || true
+          $ANDROID_HOME/platform-tools/adb shell "echo 0 > /proc/sys/kernel/yama/ptrace_scope" 2>/dev/null || true
           # Start frida-server
           $ANDROID_HOME/platform-tools/adb shell /data/local/tmp/frida-server -D &
           sleep 5
