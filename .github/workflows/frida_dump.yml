@@ -8,8 +8,8 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        api-level: [35]
-        target: [google_apis_playstore]
+        api-level: [33]
+        target: [google_atd]
         arch: [x86_64]
     steps:
       - uses: actions/checkout@v4
