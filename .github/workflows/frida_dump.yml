@@ -18,7 +18,6 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          ls -la /dev/kvm
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -46,7 +45,6 @@ jobs:
             -memory 2048 -cores 2 &
           echo "Waiting for emulator to boot..."
           $ANDROID_HOME/platform-tools/adb wait-for-device
-          # Wait for boot to complete (up to 10 minutes)
           BOOT_TIMEOUT=600
           BOOT_START=$(date +%s)
           while true; do
@@ -70,6 +68,7 @@ jobs:
 
       - name: Install Keep APK + Frida
         run: |
+          ANDROID_HOME=/usr/local/lib/android/sdk
           # Download Keep APK
           wget -q --timeout=60 "https://d.apkpure.net/b/APK/com.gotokeep.keep?version=latest" -O /tmp/keep.apk || \
           curl -sL --connect-timeout 30 -o /tmp/keep.apk "https://api.apkcombo.com/download/com.gotokeep.keep" || \
@@ -88,6 +87,20 @@ jobs:
           $ANDROID_HOME/platform-tools/adb push /tmp/frida-server /data/local/tmp/
           $ANDROID_HOME/platform-tools/adb shell chmod 755 /data/local/tmp/frida-server
 
+      - name: Find launchable activity
+        run: |
+          ANDROID_HOME=/usr/local/lib/android/sdk
+          echo "=== Finding launchable activity ==="
+          # Use aapt2 to dump APK manifest info
+          AAPT=$(ls /usr/local/lib/android/sdk/build-tools/*/aapt 2>/dev/null | head -1)
+          if [ -n "$AAPT" ] && [ -f /tmp/keep.apk ]; then
+            $AAPT dump badging /tmp/keep.apk 2>/dev/null | grep -E "package:|launchable-activity|application-label" || true
+          else
+            echo "aapt not found, trying pm command via adb..."
+            $ANDROID_HOME/platform-tools/adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null || \
+            $ANDROID_HOME/platform-tools/adb shell pm dump com.gotokeep.keep 2>/dev/null | grep -i "MainActivity\|Splash\|Launcher\|Login" | head -5 || true
+          fi
+
       - name: Install frida-tools
         run: |
           pip install frida-tools 2>&1 | tail -5
@@ -95,29 +108,45 @@ jobs:
 
       - name: Run Frida Hook
         run: |
+          ANDROID_HOME=/usr/local/lib/android/sdk
           # Start frida-server
           $ANDROID_HOME/platform-tools/adb shell /data/local/tmp/frida-server -D &
           sleep 3
           $ANDROID_HOME/platform-tools/adb forward tcp:27042 tcp:27042
+          # Find correct activity
+          echo "=== Finding correct activity name ==="
+          MAIN_ACTIVITY=$($ANDROID_HOME/platform-tools/adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1)
+          echo "Main activity: [$MAIN_ACTIVITY]"
+          if [ -z "$MAIN_ACTIVITY" ] || [ "$MAIN_ACTIVITY" = "No activity found" ]; then
+            MAIN_ACTIVITY=$($ANDROID_HOME/platform-tools/adb shell pm dump com.gotokeep.keep 2>/dev/null | grep -oP 'com\.gotokeep\.keep\/[^ ]+' | head -1)
+            echo "Fallback activity: [$MAIN_ACTIVITY]"
+          fi
+          if [ -z "$MAIN_ACTIVITY" ]; then
+            MAIN_ACTIVITY="com.gotokeep.keep/.MainActivity"
+            echo "Using default: [$MAIN_ACTIVITY]"
+          fi
           # Launch app
-          $ANDROID_HOME/platform-tools/adb shell am start -n com.gotokeep.keep/.MainActivity
+          $ANDROID_HOME/platform-tools/adb shell am start -n "$MAIN_ACTIVITY"
           sleep 10
           $ANDROID_HOME/platform-tools/adb shell am start -d "keep://open/login"
           sleep 5
-          # Run Frida hooks
-          echo "=== Method 1: Attach ==="
-          timeout 120 frida -U --attach com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_attach.txt 2>&1 || true
-          echo "=== Method 2: Spawn ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause -o /tmp/frida_output_spawn.txt 2>&1 || true
-          echo "=== Method 3: Spawn V8 ==="
-          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js --no-pause --runtime=v8 -o /tmp/frida_output_v8.txt 2>&1 || true
-          # Collect results
+          # Run Frida hooks (fixed syntax for frida-tools >=16)
+          echo "=== Method 1: Spawn ==="
+          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_spawn.txt 2>&1 || true
+          echo "=== Method 2: Attach by name ==="
+          timeout 120 frida -U -n com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_attach.txt 2>&1 || true
+          echo "=== Method 3: Spawn with attach ==="
+          timeout 120 frida -U -f com.gotokeep.keep -l /github/workspace/frida_hook.js -o /tmp/frida_output_v8.txt 2>&1 || true
+          echo "=== Method 4: frida-trace ==="
+          timeout 120 frida-trace -U -f com.gotokeep.keep -j '*VerificationCodeType*!*' -o /tmp/frida_output_trace.txt 2>&1 || true
           echo "=== RESULTS ==="
           cat /tmp/frida_output_*.txt 2>/dev/null || echo "No output files"
+          ls -la /tmp/frida_output*.txt 2>/dev/null || true
 
       - name: Debug - dump extra info
         if: always()
         run: |
+          ANDROID_HOME=/usr/local/lib/android/sdk
           echo "=== Installed packages ==="
           $ANDROID_HOME/platform-tools/adb shell pm list packages | grep keep || echo "Keep not installed"
           echo "=== Running processes ==="
