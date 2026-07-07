@@ -13,90 +13,53 @@ jobs:
         arch: [x86_64]
     steps:
       - uses: actions/checkout@v4
-
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-
       - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Install frida-tools
         run: |
           pip install frida-tools
           frida --version
-
-      - name: Download Keep APK
+      - name: Download APK and frida-server
         run: |
           wget -q --timeout=120 "https://github.com/cwx8588/keep-frida-hook/releases/download/keep-apk-v8.6.20/keep_v8.6.20.apk" -O /tmp/keep.apk
-          ls -la /tmp/keep.apk
-
-      - name: Download Frida server
-        run: |
           wget -q --timeout=60 "https://github.com/frida/frida/releases/download/17.15.3/frida-server-17.15.3-android-x86_64.xz" -O /tmp/frida-server.xz
           xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
-          ls -la /tmp/frida-server
-
+          ls -la /tmp/keep.apk /tmp/frida-server
       - name: Run Android Emulator (API 35 ARM Translation)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          target: google_apis_playstore
           arch: x86_64
           profile: pixel_5
           force-avd-creation: false
           emulator-options: -no-snapshot-load -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           script: |
-            # Disable SELinux + ptrace restrictions
             adb root
             adb shell setenforce 0
             adb shell "echo 0 > /proc/sys/kernel/yama/ptrace_scope" 2>/dev/null || true
-            # Push Frida server
             adb push /tmp/frida-server /data/local/tmp/
             adb shell chmod 755 /data/local/tmp/frida-server
-            # Install APK (google_apis_playstore has ARM translation)
-            INSTALL_RESULT=$(adb install -r -d /tmp/keep.apk 2>&1) || true
-            echo "Install result: $INSTALL_RESULT"
-            if echo "$INSTALL_RESULT" | grep -q "NO_MATCHING_ABIS"; then
-              echo "ABI mismatch! Trying with stripped native libs..."
-              mkdir -p /tmp/keep_stripped
-              cd /tmp/keep_stripped
-              unzip -o /tmp/keep.apk >/dev/null 2>&1
-              rm -rf lib/armeabi-v7a lib/arm64-v8a
-              rm -rf META-INF
-              zip -r /tmp/keep_stripped.apk . >/dev/null 2>&1
-              adb install -r -d /tmp/keep_stripped.apk 2>&1 || echo "Stripped install also failed"
-            fi
-            # Start Frida server
+            adb install -r -d /tmp/keep.apk 2>&1; echo "INSTALL_EXIT=$?"
+            KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n'); echo "Keep PID before start: [$KEEP_PID]"
             adb shell /data/local/tmp/frida-server -D &
             sleep 3
             adb forward tcp:27042 tcp:27042
-            # Launch app
-            MAIN_ACTIVITY=$(adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1)
-            echo "Main activity: [$MAIN_ACTIVITY]"
-            adb shell am start -n "$MAIN_ACTIVITY"
-            sleep 10
-            adb shell am start -d "keep://open/login"
-            sleep 5
-            # Get PID
-            KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n')
-            echo "Keep PID: [$KEEP_PID]"
-            if [ -z "$KEEP_PID" ]; then
-              adb shell ps | grep keep || echo "App not running!"
-              exit 1
-            fi
-            # Attach Frida and dump enum values
-            timeout 60 frida -U --attach-pid "$KEEP_PID" -l /home/runner/work/keep-frida-hook/keep-frida-hook/frida_hook.js \
-              -o /tmp/frida_output.txt <<< "exit" 2>&1 || true
-            echo "=== RESULTS ==="
-            cat /tmp/frida_output.txt 2>/dev/null || echo "No output"
-            # Upload as artifact using gradle-hack or just leave file for upload step
-
+            MAIN_ACTIVITY=$(adb shell pm resolve-activity --brief com.gotokeep.keep 2>/dev/null | tail -1); echo "Main activity: [$MAIN_ACTIVITY]"
+            adb shell am start -n "$MAIN_ACTIVITY"; sleep 10
+            adb shell am start -d "keep://open/login"; sleep 5
+            KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n'); echo "Keep PID after start: [$KEEP_PID]"
+            if [ -z "$KEEP_PID" ]; then adb shell ps | grep keep || echo "App not running!"; exit 1; fi
+            timeout 60 frida -U --attach-pid "$KEEP_PID" -l $GITHUB_WORKSPACE/frida_hook.js -o /tmp/frida_output.txt <<< "exit" 2>&1 || true
+            echo "=== RESULTS ===" && cat /tmp/frida_output.txt 2>/dev/null || echo "No output"
       - name: Upload Results
         if: always()
         uses: actions/upload-artifact@v4
