@@ -76,7 +76,7 @@ jobs:
           echo "GitHub Release download failed"
           ls -la /tmp/keep.apk
           # Download Frida server x86_64
-          FRIDA_VER="17.9.11"
+          FRIDA_VER="17.15.3"
           wget -q --timeout=60 "https://github.com/frida/frida/releases/download/${FRIDA_VER}/frida-server-${FRIDA_VER}-android-x86_64.xz" -O /tmp/frida-server.xz
           xz -d /tmp/frida-server.xz -c > /tmp/frida-server && chmod +x /tmp/frida-server
           ls -la /tmp/frida-server
