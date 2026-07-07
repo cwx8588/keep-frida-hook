@@ -1,109 +1,84 @@
-// Frida script - enumerate all loaded classes to find VerificationCodeType
+// Frida script - monitor class loading and find VerificationCodeType
+// Log all loaded classes matching Keep patterns
 
 Java.performNow(function() {
-    console.log('[+] Script loaded. Enumerating loaded classes...');
+    console.log('[+] Script loaded. Monitoring class loading...');
     
-    // Search for relevant classes
+    // First, enumerate all currently loaded classes
+    console.log('[+] Currently loaded Keep classes:');
     Java.enumerateLoadedClasses({
         onMatch: function(className) {
-            if (className.indexOf('VerificationCodeType') !== -1 ||
-                className.indexOf('verificationCodeType') !== -1 ||
-                className.indexOf('verification_code') !== -1 ||
-                className.indexOf('sms') !== -1 ||
-                className.indexOf('Sms') !== -1 ||
-                className.indexOf('login') !== -1 ||
-                className.indexOf('Login') !== -1 ||
-                className.indexOf('account') !== -1 ||
-                className.indexOf('Account') !== -1) {
-                console.log('[CLASS] ' + className);
+            if (className.indexOf('gotokeep') !== -1 ||
+                className.indexOf('keep') !== -1 ||
+                className.indexOf('ob0') !== -1 ||
+                className.indexOf('Verification') !== -1 ||
+                className.indexOf('Encrypt') !== -1 ||
+                className.indexOf('DexGuard') !== -1) {
+                console.log('[KEEP] ' + className);
             }
         },
         onComplete: function() {
-            console.log('[+] Enumeration complete');
+            console.log('[+] Initial enumeration complete');
         }
     });
     
-    // Also try to find ob0 class directly
-    try {
-        console.log('[+] Trying direct class lookup...');
-        
-        // Try known obfuscated patterns
-        var patterns = [
-            'ob0.f',
-            'ob0',
-            'com.gotokeep.keep.fd.business.account.login.view.VerificationCodeType',
-            'com.gotokeep.keep.fd.business.account.login.view.a',
-            'com.gotokeep.keep.fd.business.account.login.view.b',
-            'com.gotokeep.keep.fd.business.account.login.LoginViewModel'
-        ];
-        patterns.forEach(function(cls) {
-            try {
-                var c = Java.use(cls);
-                console.log('[+] FOUND class: ' + cls);
-                // List its methods
-                var methods = c.class.getDeclaredMethods();
-                for (var i = 0; i < methods.length; i++) {
-                    console.log('[METHOD] ' + methods[i].toString());
-                }
-            } catch(e) {
-                // Class not found, ignore
-            }
-        });
-    } catch(e) {
-        console.log('[!] Direct lookup error: ' + e);
-    }
+    // Set up a listener for new classes being loaded
+    console.log('[+] Setting up class load listener...');
+    Java.enumerateClassLoaders({
+        onMatch: function(loader) {
+            console.log('[LOADER] ' + loader);
+        },
+        onComplete: function() {
+            console.log('[+] Loader enumeration complete');
+        }
+    });
 });
 
-// Keep checking for loaded classes every 5 seconds for 30 seconds
-var checkInterval = 5;
-var maxChecks = 6;
+// Check periodically for new classes
 var checkCount = 0;
 
-function checkClasses() {
+function periodicCheck() {
     checkCount++;
-    console.log('[+] Check #' + checkCount + ' at ' + (checkCount * checkInterval) + 's');
+    var prefix = '[' + checkCount + ']';
     
     Java.perform(function() {
         Java.enumerateLoadedClasses({
             onMatch: function(className) {
-                if (className.indexOf('VerificationCodeType') !== -1 ||
-                    className.indexOf('sms') !== -1 ||
-                    className.indexOf('Sms') !== -1 ||
-                    className.indexOf('ob0') !== -1) {
-                    console.log('[LATE_CLASS] ' + className);
-                    // Try to hook it
-                    try {
-                        var target = Java.use(className);
-                        if (className.indexOf('VerificationCodeType') !== -1) {
-                            console.log('[+] Found VerificationCodeType! Hooking h()...');
-                            target.h.implementation = function() {
-                                var result = this.h();
-                                console.log('[ENUM] h() = ' + result);
-                                console.log('[ENUM] name = ' + this.name());
-                                return result;
+                if (className.indexOf('gotokeep') !== -1 ||
+                    className.indexOf('ob0') !== -1 ||
+                    className.indexOf('Verification') !== -1) {
+                    console.log(prefix + ' NEW_KEEP_CLASS: ' + className);
+                    // Try to hook if it's the target
+                    if (className.indexOf('VerificationCodeType') !== -1) {
+                        try {
+                            var vct = Java.use(className);
+                            console.log(prefix + ' Found VerificationCodeType! Dumping values...');
+                            vct.h.implementation = function() {
+                                var r = this.h();
+                                console.log(prefix + ' [ENUM] h()=' + r + ' name=' + this.name());
+                                return r;
                             };
-                            // Dump values
-                            var values = target.values();
-                            console.log('[+] Total enum constants: ' + values.length);
-                            values.forEach(function(v) {
-                                console.log('[ENUM] name=' + v.name() + ' h()=' + v.h());
+                            var vals = vct.values();
+                            console.log(prefix + ' Total: ' + vals.length);
+                            vals.forEach(function(v) {
+                                console.log(prefix + ' [ENUM] name=' + v.name() + ' h()=' + v.h());
                             });
+                        } catch(e) {
+                            console.log(prefix + ' Hook error: ' + e);
                         }
-                    } catch(e) {
-                        console.log('[!] Hook failed for ' + className + ': ' + e);
                     }
                 }
             },
             onComplete: function() {
-                if (checkCount < maxChecks) {
-                    setTimeout(checkClasses, checkInterval * 1000);
+                if (checkCount < 12) {
+                    setTimeout(periodicCheck, 10000);
                 } else {
-                    console.log('[+] All checks complete');
+                    console.log('[+] Final check complete after ' + (checkCount * 10) + 's');
                 }
             }
         });
     });
 }
 
-// Start periodic checking after 3 seconds (let app settle)
-setTimeout(checkClasses, 3000);
+// Start periodic checks
+setTimeout(periodicCheck, 5000);
