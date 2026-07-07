@@ -79,7 +79,7 @@ jobs:
             echo "MAIN_ACTIVITY=[com.gotokeep.keep/.splash.SplashActivity]"
             adb shell am start -n "com.gotokeep.keep/.splash.SplashActivity"; sleep 15
             adb shell am start -d "keep://open/login"; sleep 5
-            KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n'); echo "KEEP_PID=[$KEEP_PID]"; if [ -z "$KEEP_PID" ]; then echo "App not running!"; adb shell ps | grep keep || true; exit 1; fi; timeout 60 frida -U --attach-pid "$KEEP_PID" -l $GITHUB_WORKSPACE/frida_hook.js -o /tmp/frida_output.txt <<< "exit" 2>&1 || true
+            KEEP_PID=$(adb shell pidof com.gotokeep.keep 2>/dev/null | tr -d '\r\n'); echo "KEEP_PID=[$KEEP_PID]"; if [ -z "$KEEP_PID" ]; then echo "App not running!"; adb shell ps | grep keep || true; exit 1; fi; timeout 60 frida -U --attach-pid "$KEEP_PID" -l $GITHUB_WORKSPACE/frida_hook.js -o /tmp/frida_output.txt </dev/null 2>&1 || true
             echo "=== RESULTS ===" && cat /tmp/frida_output.txt 2>/dev/null || echo "No output"
       - name: Upload Results
         if: always()
