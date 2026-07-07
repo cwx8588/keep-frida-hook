@@ -104,10 +104,13 @@ jobs:
           # Attach to process (DexGuard blocks spawn)
           echo "=== Attaching ==="
           if [ -n "$KEEP_PID" ]; then
-            timeout 120 frida -U --attach-pid "$KEEP_PID" -l frida_hook.js -o /tmp/frida_output.txt 2>&1
+            echo "Running Frida attach on PID $KEEP_PID..."
+            timeout 120 frida -U --attach-pid "$KEEP_PID" -l frida_hook.js -q -o /tmp/frida_output.txt < /dev/null 2>&1 || true
           else
-            timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -o /tmp/frida_output.txt 2>&1
+            echo "Running Frida attach by name..."
+            timeout 120 frida -U -n com.gotokeep.keep -l frida_hook.js -q -o /tmp/frida_output.txt < /dev/null 2>&1 || true
           fi
+          echo "=== Frida exit code: $? ==="
           echo "=== RESULTS ==="
           cat /tmp/frida_output.txt 2>/dev/null || echo "No output"
 
